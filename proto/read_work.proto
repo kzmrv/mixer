@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+
+message Work {
+    string file = 1;
+    string targetSubstring = 2;
+  }
+
+  message LogLine {
+    google.protobuf.Timestamp timestamp = 1;
+    string entry = 2;
+
+  }
+
+  message WorkResult {
+    repeated LogLine logs = 1;
+  }
+
+  service Worker {
+    rpc DoWork (Work) returns (WorkResult) {}
+  }

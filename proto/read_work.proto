@@ -14,9 +14,9 @@ message Work {
   }
 
   message WorkResult {
-    repeated LogLine logs = 1;
+    LogLine logLine = 1;
   }
 
   service Worker {
-    rpc DoWork (Work) returns (WorkResult) {}
+    rpc DoWork (Work) returns (stream WorkResult) {}
   }

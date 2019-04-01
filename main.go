@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ type userRequest struct {
 	targetSubstring string
 }
 
+// TODO Streaming grpc
 func main() {
 	log.InitFlags(nil)
 	connections, err := initWorkers()
@@ -46,33 +48,48 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	for _, work := range works {
-		// todo parallel async work
-		res, err := dispatch(work, workers)
-		if err != nil {
-			log.Fatal(err)
-		}
-		println(res)
-		break // todo remove
+	ch := make(chan *callResult)
+	limit := int(math.Min(10, float64(len(works)))) /*todo remove*/
+	for _, work := range works[:limit] {
+		go dispatch(work, workers, ch)
 	}
+	for i := 0; i < limit; i++ {
+		res := <-ch
+		if res.err != nil {
+			log.Errorf("Call to worker failed with: %v", res.err)
+		} else {
+			log.Infof("Work completed with %d lines found", len(res.workResult.Logs))
+		}
+	}
+	log.Info("App finished")
 }
 
 func getNextRequest() *userRequest {
 	return &userRequest{
 		buildNumber:     300,
 		filePrefix:      "kube-apiserver-audit.log-",
-		targetSubstring: "asdasdad",
+		targetSubstring: "2019-01-25T16:21:19.61",
 	}
 }
 
 var i = -1
 
 // Round robin dispatch
-func dispatch(work *pb.Work, workers []pb.WorkerClient) (*pb.WorkResult, error) {
+func dispatch(work *pb.Work, workers []pb.WorkerClient, ch chan *callResult) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*timeoutSeconds)
 	defer cancel()
 	i++
-	return workers[i%len(workers)].DoWork(ctx, work)
+	log.Info(i) // todo
+	workRes, err := workers[i%len(workers)].DoWork(ctx, work)
+	callRes := &callResult{
+		workResult: workRes,
+		err:        err}
+	ch <- callRes
+}
+
+type callResult struct {
+	workResult *pb.WorkResult
+	err        error
 }
 
 func initWorkers() ([]*grpc.ClientConn, error) {

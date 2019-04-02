@@ -3,8 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"math"
+	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"cloud.google.com/go/storage"
@@ -27,7 +28,6 @@ type userRequest struct {
 	targetSubstring string
 }
 
-// TODO Streaming grpc
 func main() {
 	log.InitFlags(nil)
 	connections, err := initWorkers()
@@ -47,20 +47,25 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
+	results := make([]chan *callResult, len(works))
+	var wg sync.WaitGroup
+	wg.Add(len(works))
+	for i, work := range works {
+		results[i] = make(chan *callResult, 100000) // todo parallel receivers
+		go dispatch(&wg, work, workers, results[i])
+	}
 
-	ch := make(chan *callResult)
-	limit := int(math.Min(10, float64(len(works)))) /*todo remove*/
-	for _, work := range works[:limit] {
-		go dispatch(work, workers, ch)
-	}
-	for i := 0; i < limit; i++ {
-		res := <-ch
-		if res.err != nil {
-			log.Errorf("Call to worker failed with: %v", res.err)
-		} else {
-			log.Infof("Work completed with %d lines found", len(res.workResult.Logs))
+	wg.Wait()
+
+	for i := 0; i < len(works); i++ {
+		counter := -1
+		for hasMore := true; hasMore; {
+			_, hasMore = <-results[i]
+			counter++
 		}
+		log.Infof("File %v found %d matching lines", works[i].File, counter)
 	}
+
 	log.Info("App finished")
 }
 
@@ -75,16 +80,28 @@ func getNextRequest() *userRequest {
 var i = -1
 
 // Round robin dispatch
-func dispatch(work *pb.Work, workers []pb.WorkerClient, ch chan *callResult) {
+func dispatch(wg *sync.WaitGroup, work *pb.Work, workers []pb.WorkerClient, ch chan *callResult) {
+	defer close(ch)
+	defer wg.Done()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*timeoutSeconds)
 	defer cancel()
 	i++
-	log.Info(i) // todo
-	workRes, err := workers[i%len(workers)].DoWork(ctx, work)
-	callRes := &callResult{
-		workResult: workRes,
-		err:        err}
-	ch <- callRes
+	client, err := workers[i%len(workers)].DoWork(ctx, work)
+	if err != nil {
+		ch <- &callResult{err: err}
+		return
+	}
+	for {
+		workRes, err := client.Recv()
+		if err == io.EOF {
+			return
+		}
+		res := &callResult{workResult: workRes, err: err}
+		ch <- res
+		if err != nil {
+			return
+		}
+	}
 }
 
 type callResult struct {

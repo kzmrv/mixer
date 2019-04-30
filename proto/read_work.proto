@@ -10,11 +10,10 @@ message Work {
   message LogLine {
     google.protobuf.Timestamp timestamp = 1;
     string entry = 2;
-
   }
 
   message WorkResult {
-    LogLine logLine = 1;
+    repeated LogLine logLines = 1;
   }
 
   service Worker {

@@ -59,9 +59,12 @@ func main() {
 
 	for i := 0; i < len(works); i++ {
 		counter := -1
-		for hasMore := true; hasMore; {
-			_, hasMore = <-results[i]
-			counter++
+		for {
+			lines, hasMore := <-results[i]
+			counter += len(lines.workResult.LogLines)
+			if !hasMore {
+				break
+			}
 		}
 		log.Infof("File %v found %d matching lines", works[i].File, counter)
 	}
@@ -71,9 +74,9 @@ func main() {
 
 func getNextRequest() *userRequest {
 	return &userRequest{
-		buildNumber:     300,
+		buildNumber:     310,
 		filePrefix:      "kube-apiserver-audit.log-",
-		targetSubstring: "2019-01-25T16:21:19.61",
+		targetSubstring: "2019-03-14T08:11:52.2523",
 	}
 }
 

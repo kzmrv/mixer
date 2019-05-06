@@ -5,6 +5,8 @@ import "google/protobuf/timestamp.proto";
 message Work {
     string file = 1;
     string targetSubstring = 2;
+    google.protobuf.Timestamp since = 3;
+    google.protobuf.Timestamp until = 4;
   }
 
   message LogLine {

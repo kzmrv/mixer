@@ -29,6 +29,8 @@ type userRequest struct {
 	buildNumber     int
 	filePrefix      string
 	targetSubstring string
+	since           time.Time
+	until           time.Time
 }
 
 func main() {
@@ -94,10 +96,15 @@ func main() {
 }
 
 func getNextRequest() *userRequest {
+	since, _ := time.Parse(time.RFC3339Nano, "2019-02-15T15:38:48.908485Z")
+	until, _ := time.Parse(time.RFC3339Nano, "2019-02-15T18:38:48.908485Z")
+
 	return &userRequest{
 		buildNumber:     310,
 		filePrefix:      "kube-apiserver-audit.log-",
 		targetSubstring: "9a27",
+		since:           since,
+		until:           until,
 	}
 }
 
@@ -152,8 +159,16 @@ func getWorks(request *userRequest) ([]*pb.Work, error) {
 	}
 
 	works := make([]*pb.Work, len(files))
+
+	since, _ := ptypes.TimestampProto(request.since)
+	until, _ := ptypes.TimestampProto(request.until)
 	for i, file := range files {
-		work := &pb.Work{File: file.Name, TargetSubstring: request.targetSubstring}
+		work := &pb.Work{
+			File:            file.Name,
+			TargetSubstring: request.targetSubstring,
+			Since:           since,
+			Until:           until,
+		}
 		works[i] = work
 	}
 	return works, nil

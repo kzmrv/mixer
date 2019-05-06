@@ -58,13 +58,21 @@ func main() {
 	wg.Wait()
 
 	for i := 0; i < len(works); i++ {
-		counter := -1
+		counter := 0
 		for {
-			lines, hasMore := <-results[i]
-			counter += len(lines.workResult.LogLines)
+			batchResult, hasMore := <-results[i]
 			if !hasMore {
 				break
 			}
+			if batchResult.err != nil {
+				log.Errorf("Error in result batch: %v", batchResult.err)
+			} else {
+				for lineN, line := range batchResult.workResult.LogLines {
+					log.Infof("Line %v: %v", lineN, line)
+					counter++
+				}
+			}
+
 		}
 		log.Infof("File %v found %d matching lines", works[i].File, counter)
 	}
@@ -76,7 +84,7 @@ func getNextRequest() *userRequest {
 	return &userRequest{
 		buildNumber:     310,
 		filePrefix:      "kube-apiserver-audit.log-",
-		targetSubstring: "2019-03-14T08:11:52.2523",
+		targetSubstring: "9a27",
 	}
 }
 

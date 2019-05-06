@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/golang/protobuf/ptypes"
 
 	"cloud.google.com/go/storage"
 	pb "github.com/kzmrv/mixer/proto"
@@ -47,34 +50,44 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	results := make([]chan *callResult, len(works))
+	rpcResponses := make([]chan *callResult, len(works))
 	var wg sync.WaitGroup
 	wg.Add(len(works))
 	for i, work := range works {
-		results[i] = make(chan *callResult, 100000) // todo parallel receivers
-		go dispatch(&wg, work, workers, results[i])
+		rpcResponses[i] = make(chan *callResult, 100000) // todo parallel receivers
+		go dispatch(&wg, work, workers, rpcResponses[i])
 	}
 
 	wg.Wait()
 
+	matchingLines := make([]*pb.LogLine, 0)
 	for i := 0; i < len(works); i++ {
 		counter := 0
 		for {
-			batchResult, hasMore := <-results[i]
+			batchResult, hasMore := <-rpcResponses[i]
 			if !hasMore {
 				break
 			}
 			if batchResult.err != nil {
 				log.Errorf("Error in result batch: %v", batchResult.err)
 			} else {
-				for lineN, line := range batchResult.workResult.LogLines {
-					log.Infof("Line %v: %v", lineN, line)
-					counter++
-				}
+				matchingLines = append(matchingLines, batchResult.workResult.LogLines...)
+				counter += len(batchResult.workResult.LogLines)
 			}
 
 		}
-		log.Infof("File %v found %d matching lines", works[i].File, counter)
+		log.Infof("File %v found %d matching lines", works[i].File, len(matchingLines))
+	}
+
+	sort.Slice(matchingLines, func(i, j int) bool {
+		tsi := *matchingLines[i].Timestamp
+		tsj := *matchingLines[j].Timestamp
+		return tsi.Seconds < tsj.Seconds ||
+			(tsi.Seconds == tsj.Seconds && tsi.Nanos < tsj.Nanos)
+	})
+
+	for _, line := range matchingLines {
+		log.Info(ptypes.TimestampString(line.Timestamp))
 	}
 
 	log.Info("App finished")
@@ -88,7 +101,7 @@ func getNextRequest() *userRequest {
 	}
 }
 
-var i = -1
+var dispatchCounter = -1
 
 // Round robin dispatch
 func dispatch(wg *sync.WaitGroup, work *pb.Work, workers []pb.WorkerClient, ch chan *callResult) {
@@ -96,8 +109,8 @@ func dispatch(wg *sync.WaitGroup, work *pb.Work, workers []pb.WorkerClient, ch c
 	defer wg.Done()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*timeoutSeconds)
 	defer cancel()
-	i++
-	client, err := workers[i%len(workers)].DoWork(ctx, work)
+	dispatchCounter++
+	client, err := workers[dispatchCounter%len(workers)].DoWork(ctx, work)
 	if err != nil {
 		ch <- &callResult{err: err}
 		return

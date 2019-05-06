@@ -33,6 +33,11 @@ type userRequest struct {
 	until           time.Time
 }
 
+type callResult struct {
+	workResult *pb.WorkResult
+	err        error
+}
+
 func main() {
 	log.InitFlags(nil)
 	connections, err := initWorkers()
@@ -56,12 +61,17 @@ func main() {
 	var wg sync.WaitGroup
 	wg.Add(len(works))
 	for i, work := range works {
-		rpcResponses[i] = make(chan *callResult, 100000) // todo parallel receivers
+		rpcResponses[i] = make(chan *callResult, 100000)
 		go dispatch(&wg, work, workers, rpcResponses[i])
 	}
 
 	wg.Wait()
+	processWorkResults(rpcResponses, works)
 
+	log.Info("App finished")
+}
+
+func processWorkResults(rpcResponses []chan *callResult, works []*pb.Work) {
 	matchingLines := make([]*pb.LogLine, 0)
 	for i := 0; i < len(works); i++ {
 		counter := 0
@@ -81,20 +91,30 @@ func main() {
 		log.Infof("File %v found %d matching lines", works[i].File, len(matchingLines))
 	}
 
-	sort.Slice(matchingLines, func(i, j int) bool {
-		tsi := *matchingLines[i].Timestamp
-		tsj := *matchingLines[j].Timestamp
-		return tsi.Seconds < tsj.Seconds ||
-			(tsi.Seconds == tsj.Seconds && tsi.Nanos < tsj.Nanos)
+	sort.Slice(matchingLines, func(less, greater int) bool {
+		tsLess := *matchingLines[less].Timestamp
+		tsGreater := *matchingLines[greater].Timestamp
+		return tsLess.Seconds < tsGreater.Seconds ||
+			(tsLess.Seconds == tsGreater.Seconds && tsLess.Nanos < tsGreater.Nanos)
 	})
 
 	for _, line := range matchingLines {
-		log.Info(ptypes.TimestampString(line.Timestamp))
+		log.Infof("%v : %v", ptypes.TimestampString(line.Timestamp), line.Entry)
 	}
-
-	log.Info("App finished")
 }
 
+func initWorkers() ([]*grpc.ClientConn, error) {
+	conn, err := grpc.Dial(address, grpc.WithInsecure())
+	if err != nil {
+		return nil, err
+	}
+	workers := []*grpc.ClientConn{
+		conn,
+	}
+	return workers, nil
+}
+
+// TODO replace with real requests
 func getNextRequest() *userRequest {
 	since, _ := time.Parse(time.RFC3339Nano, "2019-02-15T15:38:48.908485Z")
 	until, _ := time.Parse(time.RFC3339Nano, "2019-02-15T18:38:48.908485Z")
@@ -108,47 +128,27 @@ func getNextRequest() *userRequest {
 	}
 }
 
-var dispatchCounter = -1
+var dispatchCounter = 0
 
 // Round robin dispatch
-func dispatch(wg *sync.WaitGroup, work *pb.Work, workers []pb.WorkerClient, ch chan *callResult) {
-	defer close(ch)
+func dispatch(wg *sync.WaitGroup, work *pb.Work, workers []pb.WorkerClient, rpcResponses chan *callResult) {
+	defer close(rpcResponses)
 	defer wg.Done()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*timeoutSeconds)
 	defer cancel()
-	dispatchCounter++
 	client, err := workers[dispatchCounter%len(workers)].DoWork(ctx, work)
+	dispatchCounter++
 	if err != nil {
-		ch <- &callResult{err: err}
+		rpcResponses <- &callResult{err: err}
 		return
 	}
 	for {
-		workRes, err := client.Recv()
+		workResult, err := client.Recv()
 		if err == io.EOF {
 			return
 		}
-		res := &callResult{workResult: workRes, err: err}
-		ch <- res
-		if err != nil {
-			return
-		}
+		rpcResponses <- &callResult{workResult: workResult, err: err}
 	}
-}
-
-type callResult struct {
-	workResult *pb.WorkResult
-	err        error
-}
-
-func initWorkers() ([]*grpc.ClientConn, error) {
-	conn, err := grpc.Dial(address, grpc.WithInsecure())
-	if err != nil {
-		return nil, err
-	}
-	workers := []*grpc.ClientConn{
-		conn,
-	}
-	return workers, nil
 }
 
 func getWorks(request *userRequest) ([]*pb.Work, error) {

@@ -12,7 +12,7 @@ import (
 	"github.com/golang/protobuf/ptypes"
 
 	"cloud.google.com/go/storage"
-	pb "github.com/kzmrv/mixer/proto"
+	pb "github.com/kzmrv/gcsreader/proto"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc"
